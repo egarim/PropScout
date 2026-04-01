@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: propscout-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - propscout_minio:/data
+    ports:
+      - "127.0.0.1:9010:9000"
+      - "127.0.0.1:9011:9001"
+
+  directus:
+    image: directus/directus:latest
+    container_name: propscout-directus
+    restart: unless-stopped
+    networks:
+      - db-net
+    environment:
+      SECRET: ${DIRECTUS_SECRET}
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD}
+      DB_CLIENT: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      STORAGE_LOCATIONS: local
+      CORS_ENABLED: "true"
+      CORS_ORIGIN: "true"
+    ports:
+      - "127.0.0.1:8055:8055"
+    volumes:
+      - propscout_directus:/directus/uploads
+
+networks:
+  db-net:
+    external: true
+
+volumes:
+  propscout_minio:
+  propscout_directus:

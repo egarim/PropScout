@@ -75,8 +75,8 @@ services:
       - directus_uploads:/directus/uploads
       - directus_extensions:/directus/extensions
 
-  # ── Agent API ─────────────────────────────────────────────
-  agent-api:
+  # ── Agent API (TODO: build services/agent-api first)
+  # agent-api: ─────────────────────────────────────────────
     build:
       context: ./services/agent-api
       dockerfile: Dockerfile
@@ -103,7 +103,6 @@ services:
         condition: service_healthy
 
   # ── React UI ─────────────────────────────────────────────
-  ui:
     build:
       context: ./services/ui
       dockerfile: Dockerfile
