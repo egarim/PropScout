@@ -1,0 +1,20 @@
+{
+  "name": "propscout-telegram-agent",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.67.0",
+    "axios": "^1.6.0",
+    "pg": "^8.11.3",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node-telegram-bot-api": "^0.64.14",
+    "@types/pg": "^8.10.9",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  }
+}
