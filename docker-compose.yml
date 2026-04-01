@@ -1,0 +1,120 @@
+version: "3.9"
+
+services:
+  # ── MinIO ────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: propscout-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "127.0.0.1:9010:9000"
+      - "127.0.0.1:9011:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── MinIO bucket init ─────────────────────────────────────
+  minio-init:
+    image: minio/mc:latest
+    container_name: propscout-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+        mc mb --ignore-existing local/$${MINIO_BUCKET_IMAGES};
+        mc mb --ignore-existing local/$${MINIO_BUCKET_RAW};
+        mc anonymous set download local/$${MINIO_BUCKET_IMAGES};
+        echo 'MinIO buckets ready';
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_IMAGES: ${MINIO_BUCKET_IMAGES}
+      MINIO_BUCKET_RAW: ${MINIO_BUCKET_RAW}
+
+  # ── Directus ─────────────────────────────────────────────
+  directus:
+    image: directus/directus:latest
+    container_name: propscout-directus
+    restart: unless-stopped
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      SECRET: ${DIRECTUS_SECRET}
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD}
+      DB_CLIENT: pg
+      DB_HOST: ${POSTGRES_HOST}
+      DB_PORT: ${POSTGRES_PORT}
+      DB_DATABASE: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      STORAGE_LOCATIONS: minio
+      STORAGE_MINIO_DRIVER: s3
+      STORAGE_MINIO_ENDPOINT: http://minio:9000
+      STORAGE_MINIO_BUCKET: ${MINIO_BUCKET_IMAGES}
+      STORAGE_MINIO_KEY: ${MINIO_ROOT_USER}
+      STORAGE_MINIO_SECRET: ${MINIO_ROOT_PASSWORD}
+      STORAGE_MINIO_FORCE_PATH_STYLE: "true"
+      CORS_ENABLED: "true"
+      CORS_ORIGIN: "true"
+    ports:
+      - "127.0.0.1:8055:8055"
+    volumes:
+      - directus_uploads:/directus/uploads
+      - directus_extensions:/directus/extensions
+
+  # ── Agent API ─────────────────────────────────────────────
+  agent-api:
+    build:
+      context: ./services/agent-api
+      dockerfile: Dockerfile
+    container_name: propscout-agent-api
+    restart: unless-stopped
+    environment:
+      PORT: 3100
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      APIFY_API_TOKEN: ${APIFY_API_TOKEN}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_IMAGES: ${MINIO_BUCKET_IMAGES}
+      AGENT_API_SECRET: ${AGENT_API_SECRET}
+    ports:
+      - "127.0.0.1:3100:3100"
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # ── React UI ─────────────────────────────────────────────
+  ui:
+    build:
+      context: ./services/ui
+      dockerfile: Dockerfile
+    container_name: propscout-ui
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: ${VITE_API_URL}
+    ports:
+      - "127.0.0.1:3200:80"
+
+volumes:
+  minio_data:
+  directus_uploads:
+  directus_extensions:
