@@ -1,8 +1,8 @@
 import { db } from '../db';
 
-// Claude Sonnet 4 pricing (per token)
-const PRICE_IN  = 0.075  / 1_000_000; // $3 per 1M input tokens
-const PRICE_OUT = 0.30 / 1_000_000; // $15 per 1M output tokens
+// $ per 1M tokens for the active LLM_MODEL — override in .env when the model changes
+const PRICE_IN  = Number(process.env.LLM_PRICE_IN_PER_M  || 0.075) / 1_000_000;
+const PRICE_OUT = Number(process.env.LLM_PRICE_OUT_PER_M || 0.30)  / 1_000_000;
 
 interface QueryLog {
   userId: string;

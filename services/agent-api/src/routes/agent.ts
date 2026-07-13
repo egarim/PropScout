@@ -122,13 +122,30 @@ Respond in the same language the user writes in (English or Spanish).`;
 interface Message { role: string; content: string; tool_call_id?: string; name?: string; tool_calls?: any[] }
 const history = new Map<number, Message[]>();
 
+// LLM endpoint — defaults to the fleet LiteLLM gateway (mesh); swap model/provider via env
+const LLM_BASE_URL = process.env.LLM_BASE_URL || 'http://100.64.0.4:4000/v1';
+const LLM_MODEL = process.env.LLM_MODEL || 'deepseek-v4-flash';
+const LLM_API_KEY = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
+
+async function llmChat(messages: Message[], withToolChoice = false) {
+  return axios.post(`${LLM_BASE_URL}/chat/completions`, {
+    model: LLM_MODEL,
+    messages: [{ role: 'system', content: SYSTEM }, ...messages],
+    tools: TOOLS,
+    ...(withToolChoice ? { tool_choice: 'auto' } : {}),
+    max_tokens: 800,
+  }, {
+    headers: { 'Authorization': `Bearer ${LLM_API_KEY}`, 'HTTP-Referer': 'https://propscout.xari.net', 'X-Title': 'PropScout' },
+    timeout: 60000,
+  });
+}
+
 router.post('/chat', async (req: Request, res: Response) => {
   const { message, chatId, userId, channel = 'web' } = req.body;
   const id = chatId || 0;
   if (!message) return res.status(400).json({ error: 'message required' });
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return res.json({ reply: '⚠️ AI not configured. Add OPENROUTER_API_KEY.' });
+  if (!LLM_API_KEY) return res.json({ reply: '⚠️ AI not configured. Add LLM_API_KEY.' });
 
   const msgs: Message[] = history.get(id) || [];
   msgs.push({ role: 'user', content: message });
@@ -136,16 +153,7 @@ router.post('/chat', async (req: Request, res: Response) => {
   const recent = msgs.slice(-12);
 
   try {
-    let response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-      model: 'google/gemini-2.0-flash-001',
-      messages: [{ role: 'system', content: SYSTEM }, ...recent],
-      tools: TOOLS,
-      tool_choice: 'auto',
-      max_tokens: 800,
-    }, {
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': 'https://propscout.xari.net', 'X-Title': 'PropScout' },
-      timeout: 30000,
-    });
+    let response = await llmChat(recent, true);
 
     let assistantMsg = response.data.choices[0].message;
 
@@ -161,15 +169,7 @@ router.post('/chat', async (req: Request, res: Response) => {
       }
       recent.push(...toolResults);
 
-      response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-        model: 'google/gemini-2.0-flash-001',
-        messages: [{ role: 'system', content: SYSTEM }, ...recent],
-        tools: TOOLS,
-        max_tokens: 800,
-      }, {
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': 'https://propscout.xari.net', 'X-Title': 'PropScout' },
-        timeout: 30000,
-      });
+      response = await llmChat(recent);
       assistantMsg = response.data.choices[0].message;
     }
 
