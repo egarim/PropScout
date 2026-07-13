@@ -66,9 +66,6 @@ CREATE TABLE IF NOT EXISTS properties (
   zip_code        TEXT,
   lat             DOUBLE PRECISION,        -- written directly by the scraper ingest
   lng             DOUBLE PRECISION,
-  -- PostGIS point derived from lat/lng so geo queries + GIST index still work
-  location        GEOMETRY(POINT, 4326)
-                    GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(lng, lat), 4326)) STORED,
   status          TEXT,                   -- active/sold/pending
   property_type   TEXT,                   -- house/condo/townhouse
   current_price   NUMERIC(12,2),
@@ -80,10 +77,6 @@ CREATE TABLE IF NOT EXISTS properties (
   UNIQUE(source_id, external_id)
 );
 
--- PostGIS spatial index
-CREATE INDEX IF NOT EXISTS idx_properties_location
-  ON properties USING GIST(location);
-
 -- Fuzzy text search index
 CREATE INDEX IF NOT EXISTS idx_properties_address_trgm
   ON properties USING GIN(address gin_trgm_ops);
@@ -92,46 +85,15 @@ CREATE INDEX IF NOT EXISTS idx_properties_address_trgm
 CREATE INDEX IF NOT EXISTS idx_properties_details
   ON properties USING GIN(details);
 
--- ── Property History (TimescaleDB) ────────────────────────
-CREATE TABLE IF NOT EXISTS property_history (
-  time        TIMESTAMPTZ NOT NULL,
-  property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  price       NUMERIC(12,2),
-  status      TEXT,
-  event       TEXT,                        -- 'listed','price_drop','sold'
-  source      TEXT
-);
-
-SELECT create_hypertable('property_history', 'time', if_not_exists => TRUE);
-
-CREATE INDEX IF NOT EXISTS idx_property_history_property
-  ON property_history(property_id, time DESC);
-
 -- ── Property Images ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS property_images (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
   url         TEXT NOT NULL,             -- public MinIO URL (served via /img/)
   minio_key   TEXT,                      -- object key inside the bucket
-  original_url TEXT,                     -- source image URL
-  width       INTEGER,
-  height      INTEGER,
   is_primary  BOOLEAN DEFAULT false,
-  sort_order  INTEGER DEFAULT 0,
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
-
--- ── Property Embeddings (pgvector) ────────────────────────
-CREATE TABLE IF NOT EXISTS property_embeddings (
-  property_id UUID PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
-  embedding   VECTOR(1536),               -- OpenAI ada-002 dimensions
-  model       TEXT,
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_property_embeddings_vector
-  ON property_embeddings USING ivfflat(embedding vector_cosine_ops)
-  WITH (lists = 100);
 
 -- ── Contacts ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS contacts (
