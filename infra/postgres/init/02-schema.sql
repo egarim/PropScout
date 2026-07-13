@@ -64,7 +64,11 @@ CREATE TABLE IF NOT EXISTS properties (
   city            TEXT,
   state           TEXT,
   zip_code        TEXT,
-  location        GEOMETRY(POINT, 4326),  -- PostGIS
+  lat             DOUBLE PRECISION,        -- written directly by the scraper ingest
+  lng             DOUBLE PRECISION,
+  -- PostGIS point derived from lat/lng so geo queries + GIST index still work
+  location        GEOMETRY(POINT, 4326)
+                    GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(lng, lat), 4326)) STORED,
   status          TEXT,                   -- active/sold/pending
   property_type   TEXT,                   -- house/condo/townhouse
   current_price   NUMERIC(12,2),
@@ -107,8 +111,9 @@ CREATE INDEX IF NOT EXISTS idx_property_history_property
 CREATE TABLE IF NOT EXISTS property_images (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  minio_url   TEXT NOT NULL,
-  original_url TEXT,
+  url         TEXT NOT NULL,             -- public MinIO URL (served via /img/)
+  minio_key   TEXT,                      -- object key inside the bucket
+  original_url TEXT,                     -- source image URL
   width       INTEGER,
   height      INTEGER,
   is_primary  BOOLEAN DEFAULT false,
@@ -160,15 +165,25 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 
 CREATE TABLE IF NOT EXISTS agent_queries (
-  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  session_id  UUID REFERENCES agent_sessions(id),
-  channel_id  UUID REFERENCES contact_channels(id),
-  query       TEXT NOT NULL,
-  response    TEXT,
-  tool_calls  JSONB DEFAULT '[]',
-  tokens_used INTEGER,
-  language    TEXT DEFAULT 'en',
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_id     UUID REFERENCES agent_sessions(id),
+  channel_id     UUID REFERENCES contact_channels(id),
+  user_id        TEXT,                    -- channel-native user id (telegram id, 'web', etc.)
+  channel        TEXT,                    -- 'telegram' / 'web' / ...
+  query          TEXT NOT NULL,
+  response       TEXT,
+  tool_calls     JSONB DEFAULT '[]',
+  intent         TEXT,                    -- property_search / zip_comparison / market_stats / general
+  zips_mentioned TEXT[],
+  price_min      NUMERIC,
+  price_max      NUMERIC,
+  beds_requested INTEGER,
+  tokens_in      INTEGER,
+  tokens_out     INTEGER,
+  tokens_used    INTEGER,
+  cost_usd       NUMERIC(12,6),
+  language       TEXT DEFAULT 'en',
+  created_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
 SELECT 'Schema created' AS status;
