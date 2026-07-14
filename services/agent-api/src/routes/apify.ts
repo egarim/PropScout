@@ -130,10 +130,11 @@ router.post('/run', async (req: Request, res: Response) => {
       webhooks: [{
         eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED'],
         requestUrl: webhookUrl,
+        // Apify template vars live under resource.* — bare {{runId}} arrives unrendered
         payloadTemplate: JSON.stringify({
-          runId: '{{runId}}',
-          status: '{{status}}',
-          datasetId: '{{defaultDatasetId}}',
+          runId: '{{resource.id}}',
+          status: '{{resource.status}}',
+          datasetId: '{{resource.defaultDatasetId}}',
         }),
       }],
     });
