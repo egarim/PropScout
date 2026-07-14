@@ -6,13 +6,14 @@ import { logQuery } from '../services/analytics';
 const router = Router();
 
 // ── DB query tools the AI can call ──────────────────────
+// All tools exclude 'inactive' — listings that stopped appearing in scrapes
 async function tool_get_stats() {
   const r = await db.query(`
     SELECT COUNT(*) as total,
       ROUND(AVG(current_price)) as avg_price,
       MIN(current_price) as min_price,
       MAX(current_price) as max_price
-    FROM properties WHERE current_price IS NOT NULL
+    FROM properties WHERE current_price IS NOT NULL AND status IS DISTINCT FROM 'inactive'
   `);
   return r.rows[0];
 }
@@ -25,7 +26,8 @@ async function tool_search_properties(zip?: string, min_price?: number, max_pric
   if (min_price) { conds.push(`p.current_price >= $${i++}`); vals.push(min_price); }
   if (max_price) { conds.push(`p.current_price <= $${i++}`); vals.push(max_price); }
   if (beds)      { conds.push(`(p.details->>'beds')::numeric >= $${i++}`); vals.push(beds); }
-  const where = conds.length ? `WHERE ${conds.join(' AND ')} AND p.current_price IS NOT NULL` : 'WHERE p.current_price IS NOT NULL';
+  conds.push(`p.current_price IS NOT NULL`, `p.status IS DISTINCT FROM 'inactive'`);
+  const where = `WHERE ${conds.join(' AND ')}`;
   const r = await db.query(
     `SELECT p.id, p.address, p.zip_code, p.current_price, p.status, p.property_type,
             p.details->>'beds' as beds, p.details->>'baths' as baths, p.details->>'sqFt' as sqft,
@@ -39,7 +41,8 @@ async function tool_search_properties(zip?: string, min_price?: number, max_pric
 }
 
 async function tool_zip_summary(zip?: string) {
-  const where = zip ? `WHERE zip_code = '${zip.replace(/'/g,"''")}' AND current_price IS NOT NULL` : 'WHERE current_price IS NOT NULL';
+  const alive = `current_price IS NOT NULL AND status IS DISTINCT FROM 'inactive'`;
+  const where = zip ? `WHERE zip_code = '${zip.replace(/'/g,"''")}' AND ${alive}` : `WHERE ${alive}`;
   const r = await db.query(`
     SELECT zip_code, COUNT(*) as count,
       ROUND(AVG(current_price)) as avg_price,
@@ -48,6 +51,25 @@ async function tool_zip_summary(zip?: string) {
     FROM properties ${where}
     GROUP BY zip_code ORDER BY count DESC LIMIT 15
   `);
+  return r.rows;
+}
+
+async function tool_price_changes(days = 7, zip?: string, event = 'price_drop') {
+  const vals: any[] = [Math.min(days, 90)];
+  let zipCond = '';
+  if (zip) { zipCond = 'AND p.zip_code = $2'; vals.push(zip); }
+  const r = await db.query(
+    `SELECT p.id, p.address, p.zip_code, h.old_price, h.price AS new_price,
+            h.old_price - h.price AS drop_amount, h.time::date AS changed_on,
+            pi.url AS cover_image
+     FROM property_history h
+     JOIN properties p ON p.id = h.property_id
+     LEFT JOIN property_images pi ON pi.property_id = p.id AND pi.is_primary = true
+     WHERE h.event = $${vals.push(event)} AND h.time > NOW() - make_interval(days => $1)
+       AND p.status IS DISTINCT FROM 'inactive' ${zipCond}
+     ORDER BY ABS(h.old_price - h.price) DESC LIMIT 15`,
+    vals
+  );
   return r.rows;
 }
 
@@ -81,6 +103,21 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'price_changes',
+      description: 'List recent price drops (or increases) with old vs new price. Use for "what dropped in price", "price cuts", "reductions".',
+      parameters: {
+        type: 'object',
+        properties: {
+          days:  { type: 'number', description: 'Look-back window in days (default 7, max 90)' },
+          zip:   { type: 'string', description: 'Optional zip code filter' },
+          event: { type: 'string', enum: ['price_drop', 'price_increase'], description: 'Default price_drop' },
+        },
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'zip_summary',
       description: 'Get price summary (count, avg, min, max) for each zip code, or for a specific zip.',
       parameters: {
@@ -105,6 +142,10 @@ async function callTool(name: string, args: any): Promise<string> {
     }
     if (name === 'zip_summary') {
       const r = await tool_zip_summary(args.zip);
+      return JSON.stringify(r);
+    }
+    if (name === 'price_changes') {
+      const r = await tool_price_changes(args.days, args.zip, args.event);
       return JSON.stringify(r);
     }
     return JSON.stringify({ error: 'Unknown tool' });

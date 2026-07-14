@@ -85,6 +85,43 @@ CREATE INDEX IF NOT EXISTS idx_properties_address_trgm
 CREATE INDEX IF NOT EXISTS idx_properties_details
   ON properties USING GIN(details);
 
+-- ── Property History ──────────────────────────────────────
+-- One row per price/status change, written by trigger so every write path is covered
+CREATE TABLE IF NOT EXISTS property_history (
+  time        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  old_price   NUMERIC(12,2),
+  price       NUMERIC(12,2),
+  status      TEXT,
+  event       TEXT NOT NULL              -- 'listed','price_drop','price_increase','status_change'
+);
+
+CREATE INDEX IF NOT EXISTS idx_property_history_property
+  ON property_history(property_id, time DESC);
+CREATE INDEX IF NOT EXISTS idx_property_history_event
+  ON property_history(event, time DESC);
+
+CREATE OR REPLACE FUNCTION log_property_history() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO property_history(property_id, price, status, event)
+    VALUES (NEW.id, NEW.current_price, NEW.status, 'listed');
+  ELSIF NEW.current_price IS DISTINCT FROM OLD.current_price
+     OR NEW.status IS DISTINCT FROM OLD.status THEN
+    INSERT INTO property_history(property_id, old_price, price, status, event)
+    VALUES (NEW.id, OLD.current_price, NEW.current_price, NEW.status,
+      CASE WHEN NEW.current_price < OLD.current_price THEN 'price_drop'
+           WHEN NEW.current_price > OLD.current_price THEN 'price_increase'
+           ELSE 'status_change' END);
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_property_history ON properties;
+CREATE TRIGGER trg_property_history
+  AFTER INSERT OR UPDATE ON properties
+  FOR EACH ROW EXECUTE FUNCTION log_property_history();
+
 -- ── Property Images ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS property_images (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

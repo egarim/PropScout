@@ -234,6 +234,18 @@ async function processDataset(runId: string, datasetId: string) {
     'UPDATE scrape_jobs SET records_scraped = $1, status = $2 WHERE apify_run_id = $3',
     [count, count > 0 ? 'done' : 'failed', runId]
   );
+
+  // Listings that stopped appearing in scrapes are gone from the market —
+  // mark inactive so the agent stops quoting them (history trigger logs it)
+  if (count > 0) {
+    const stale = await db.query(
+      `UPDATE properties SET status = 'inactive'
+       WHERE last_scraped_at < NOW() - INTERVAL '3 days'
+         AND status IS DISTINCT FROM 'inactive'`
+    );
+    if (stale.rowCount) console.log(`Marked ${stale.rowCount} unseen properties inactive`);
+  }
+
   console.log(`Processed ${count} properties from run ${runId}`);
 }
 
