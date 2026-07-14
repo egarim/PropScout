@@ -4,8 +4,9 @@ import { chat } from './ai';
 import { getStats, getZipSummary, searchProperties, getRecentJobs } from './queries';
 import axios from 'axios';
 
+import { ensureAccess, isAdmin, setAccess, listUsers } from './access';
+
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
-const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(Number).filter(Boolean);
 const API_URL = process.env.AGENT_API_URL || 'http://127.0.0.1:3100';
 
 if (!TOKEN) { console.error('TELEGRAM_BOT_TOKEN required'); process.exit(1); }
@@ -15,16 +16,13 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 // Store last search results per chat so user can pick by number
 const pendingResults = new Map<number, any[]>();
 
-function isAdmin(id: number) {
-  return ADMIN_IDS.length === 0 || ADMIN_IDS.includes(id);
-}
-
 function fmt(n: any) {
   return n != null ? `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : 'N/A';
 }
 
 // ── /start ────────────────────────────────────────────────
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
+  if (!(await ensureAccess(bot, msg))) return;
   bot.sendMessage(msg.chat.id,
     `🏠 *PropScout AI*\n\nWelcome! Ask me anything about Phoenix AZ real estate.\n\n` +
     `Try: _"Show me homes under $500k with 3 bedrooms"_\n\n` +
@@ -34,7 +32,8 @@ bot.onText(/\/start/, (msg) => {
 });
 
 // ── /help ─────────────────────────────────────────────────
-bot.onText(/\/help/, (msg) => {
+bot.onText(/\/help/, async (msg) => {
+  if (!(await ensureAccess(bot, msg))) return;
   bot.sendMessage(msg.chat.id,
     `🏠 *PropScout Commands*\n\n` +
     `*Data*\n` +
@@ -55,6 +54,7 @@ bot.onText(/\/help/, (msg) => {
 
 // ── /stats ────────────────────────────────────────────────
 bot.onText(/\/stats/, async (msg) => {
+  if (!(await ensureAccess(bot, msg))) return;
   try {
     const s = await getStats();
     bot.sendMessage(msg.chat.id,
@@ -71,6 +71,7 @@ bot.onText(/\/stats/, async (msg) => {
 
 // ── /zips ─────────────────────────────────────────────────
 bot.onText(/\/zips/, async (msg) => {
+  if (!(await ensureAccess(bot, msg))) return;
   try {
     const zips = await getZipSummary();
     if (!zips.length) return bot.sendMessage(msg.chat.id, '⚠️ No data yet. Run /scrape first.');
@@ -81,6 +82,7 @@ bot.onText(/\/zips/, async (msg) => {
 
 // ── /search ───────────────────────────────────────────────
 bot.onText(/\/search (.+)/, async (msg, match) => {
+  if (!(await ensureAccess(bot, msg))) return;
   const parts = match![1].trim().split(/\s+/);
   const zip = parts[0];
   const maxPrice = parts[1] ? parseInt(parts[1].replace(/[^0-9]/g, '')) : undefined;
@@ -93,6 +95,7 @@ bot.onText(/\/search (.+)/, async (msg, match) => {
 
 // ── /jobs ─────────────────────────────────────────────────
 bot.onText(/\/jobs/, async (msg) => {
+  if (!isAdmin(msg.from?.id)) return;
   try {
     const jobs = await getRecentJobs();
     if (!jobs.length) return bot.sendMessage(msg.chat.id, 'No scrape jobs yet.');
@@ -106,7 +109,7 @@ bot.onText(/\/jobs/, async (msg) => {
 
 // ── /scrape ───────────────────────────────────────────────
 bot.onText(/\/scrape(.*)/, async (msg, match) => {
-  if (!isAdmin(msg.from!.id)) return bot.sendMessage(msg.chat.id, '⛔ Admin only.');
+  if (!isAdmin(msg.from?.id)) return bot.sendMessage(msg.chat.id, '⛔ Admin only.');
   const zips = match![1].trim().split(/\s+/).filter(Boolean);
   if (!zips.length) zips.push('85254');
   bot.sendMessage(msg.chat.id, `🔄 Launching scrape for ${zips.join(', ')}…`);
@@ -129,6 +132,38 @@ bot.onText(/\/scrape(.*)/, async (msg, match) => {
 bot.onText(/\/clear/, (msg) => {
   pendingResults.delete(msg.chat.id);
   bot.sendMessage(msg.chat.id, '🧹 Conversation cleared.');
+});
+
+// ── /users (admin) ────────────────────────────────────────
+bot.onText(/\/users/, async (msg) => {
+  if (!isAdmin(msg.from?.id)) return;
+  const users = await listUsers();
+  if (!users.length) return bot.sendMessage(msg.chat.id, 'No users yet.');
+  const icon: any = { approved: '✅', pending: '⏳', denied: '⛔', blocked: '🚫' };
+  const lines = users.map(u =>
+    `${icon[u.status] || '❓'} \`${u.identifier}\` — ${u.status}, ${u.query_count} queries, seen ${u.last_seen || 'never'}`);
+  bot.sendMessage(msg.chat.id, `👥 *Users*\n\n${lines.join('\n')}`, { parse_mode: 'Markdown' });
+});
+
+// ── Approve/deny buttons ──────────────────────────────────
+bot.on('callback_query', async (q) => {
+  if (!isAdmin(q.from.id)) return bot.answerCallbackQuery(q.id, { text: 'Admins only' });
+  const [action, uid] = (q.data || '').split(':');
+  if (action !== 'approve' && action !== 'deny') return bot.answerCallbackQuery(q.id);
+
+  await setAccess(uid, action === 'approve' ? 'approved' : 'denied', String(q.from.id));
+  await bot.answerCallbackQuery(q.id, { text: action === 'approve' ? 'Approved' : 'Denied' });
+  if (q.message) {
+    await bot.editMessageText(
+      `${action === 'approve' ? '✅ Approved' : '⛔ Denied'} — \`${uid}\``,
+      { chat_id: q.message.chat.id, message_id: q.message.message_id, parse_mode: 'Markdown' }
+    ).catch(() => {});
+  }
+  if (action === 'approve') {
+    bot.sendMessage(Number(uid),
+      '✅ You\'re approved! Ask me anything about Phoenix real estate — try "3-bed homes under $600k in 85254".'
+    ).catch(() => {});
+  }
 });
 
 // ── Helper: send numbered list ────────────────────────────
@@ -197,6 +232,7 @@ async function sendPropertyDetail(chatId: number, prop: any) {
 // ── Free text → AI or number picker ──────────────────────
 bot.on('message', async (msg) => {
   if (!msg.text || msg.text.startsWith('/')) return;
+  if (!(await ensureAccess(bot, msg))) return;
 
   // Number picker
   const num = parseInt(msg.text.trim());
