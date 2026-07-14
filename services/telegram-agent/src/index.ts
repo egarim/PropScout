@@ -6,6 +6,7 @@ import axios from 'axios';
 
 import { ensureAccess, isAdmin, setAccess, listUsers } from './access';
 import { sendPriceDropAlerts, setAlerts } from './alerts';
+import { tgFormat } from './format';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const API_URL = process.env.AGENT_API_URL || 'http://127.0.0.1:3100';
@@ -283,7 +284,9 @@ bot.on('message', async (msg) => {
     const result = await chat(msg.chat.id, msg.text, msg.from?.id);
     clearInterval(typing);
 
-    await bot.sendMessage(msg.chat.id, result.reply, { parse_mode: 'Markdown' });
+    const pretty = tgFormat(result.reply);
+    await bot.sendMessage(msg.chat.id, pretty, { parse_mode: 'Markdown' })
+      .catch(() => bot.sendMessage(msg.chat.id, pretty)); // unbalanced markdown → plain text
 
     // If AI returned properties, show as numbered list
     if (result.properties && result.properties.length > 0) {

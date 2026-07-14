@@ -199,8 +199,23 @@ async function callTool(name: string, args: any): Promise<string> {
 const SYSTEM = `You are PropScout AI 🏠, a real estate data assistant for the Phoenix AZ market.
 You have access to a live database of scraped property listings.
 ALWAYS use the provided tools to answer questions — never guess prices or invent data.
-Format prices with $ and commas. Keep answers concise. 
+Format prices with $ and commas. Keep answers concise.
 Respond in the same language the user writes in (English or Spanish).`;
+
+// Channel-specific output style appended to the system prompt
+const CHANNEL_STYLE: Record<string, string> = {
+  telegram: `
+FORMATTING — you are writing inside a Telegram chat bubble. Telegram renders NO tables, NO headers, NO horizontal rules; they show up as raw ugly text.
+- NEVER output markdown tables, # headers, or --- rules.
+- Bold with *single asterisks*, and only for prices and key numbers.
+- List properties as short numbered blocks, one property per block:
+1. 📍 *7009 E Acoma Dr #2102* — *$488,900*
+   🛏 3 bd · 🚿 2 ba · 📐 1,264 sqft · Apartment
+- Maximum ~8 lines of prose besides the listing blocks. End with one short follow-up question.
+- If you listed properties, remind: reply with a number to see photos.`,
+  web: `
+FORMATTING — the web chat renders GitHub-flavored markdown. Tables are fine for comparisons; keep them small.`,
+};
 
 interface Message { role: string; content: string; tool_call_id?: string; name?: string; tool_calls?: any[] }
 
@@ -229,10 +244,11 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL || 'http://100.64.0.4:4000/v1';
 const LLM_MODEL = process.env.LLM_MODEL || 'deepseek-v4-flash';
 const LLM_API_KEY = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
 
-async function llmChat(messages: Message[], withToolChoice = false) {
+async function llmChat(messages: Message[], withToolChoice = false, channel = 'web') {
+  const system = SYSTEM + (CHANNEL_STYLE[channel] || CHANNEL_STYLE.web);
   return axios.post(`${LLM_BASE_URL}/chat/completions`, {
     model: LLM_MODEL,
-    messages: [{ role: 'system', content: SYSTEM }, ...messages],
+    messages: [{ role: 'system', content: system }, ...messages],
     tools: TOOLS,
     ...(withToolChoice ? { tool_choice: 'auto' } : {}),
     max_tokens: 800,
@@ -262,7 +278,7 @@ router.post('/chat', async (req: Request, res: Response) => {
   const recent = msgs.slice(-12);
 
   try {
-    let response = await llmChat(recent, true);
+    let response = await llmChat(recent, true, channel);
 
     let assistantMsg = response.data.choices[0].message;
 
@@ -278,7 +294,7 @@ router.post('/chat', async (req: Request, res: Response) => {
       }
       recent.push(...toolResults);
 
-      response = await llmChat(recent);
+      response = await llmChat(recent, false, channel);
       assistantMsg = response.data.choices[0].message;
     }
 
