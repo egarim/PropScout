@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS properties (
   city            TEXT,
   state           TEXT,
   zip_code        TEXT,
-  location        GEOMETRY(POINT, 4326),  -- PostGIS
+  lat             DOUBLE PRECISION,        -- written directly by the scraper ingest
+  lng             DOUBLE PRECISION,
   status          TEXT,                   -- active/sold/pending
   property_type   TEXT,                   -- house/condo/townhouse
   current_price   NUMERIC(12,2),
@@ -76,10 +77,6 @@ CREATE TABLE IF NOT EXISTS properties (
   UNIQUE(source_id, external_id)
 );
 
--- PostGIS spatial index
-CREATE INDEX IF NOT EXISTS idx_properties_location
-  ON properties USING GIST(location);
-
 -- Fuzzy text search index
 CREATE INDEX IF NOT EXISTS idx_properties_address_trgm
   ON properties USING GIN(address gin_trgm_ops);
@@ -88,45 +85,52 @@ CREATE INDEX IF NOT EXISTS idx_properties_address_trgm
 CREATE INDEX IF NOT EXISTS idx_properties_details
   ON properties USING GIN(details);
 
--- ── Property History (TimescaleDB) ────────────────────────
+-- ── Property History ──────────────────────────────────────
+-- One row per price/status change, written by trigger so every write path is covered
 CREATE TABLE IF NOT EXISTS property_history (
-  time        TIMESTAMPTZ NOT NULL,
+  time        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  old_price   NUMERIC(12,2),
   price       NUMERIC(12,2),
   status      TEXT,
-  event       TEXT,                        -- 'listed','price_drop','sold'
-  source      TEXT
+  event       TEXT NOT NULL              -- 'listed','price_drop','price_increase','status_change'
 );
-
-SELECT create_hypertable('property_history', 'time', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS idx_property_history_property
   ON property_history(property_id, time DESC);
+CREATE INDEX IF NOT EXISTS idx_property_history_event
+  ON property_history(event, time DESC);
+
+CREATE OR REPLACE FUNCTION log_property_history() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO property_history(property_id, price, status, event)
+    VALUES (NEW.id, NEW.current_price, NEW.status, 'listed');
+  ELSIF NEW.current_price IS DISTINCT FROM OLD.current_price
+     OR NEW.status IS DISTINCT FROM OLD.status THEN
+    INSERT INTO property_history(property_id, old_price, price, status, event)
+    VALUES (NEW.id, OLD.current_price, NEW.current_price, NEW.status,
+      CASE WHEN NEW.current_price < OLD.current_price THEN 'price_drop'
+           WHEN NEW.current_price > OLD.current_price THEN 'price_increase'
+           ELSE 'status_change' END);
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_property_history ON properties;
+CREATE TRIGGER trg_property_history
+  AFTER INSERT OR UPDATE ON properties
+  FOR EACH ROW EXECUTE FUNCTION log_property_history();
 
 -- ── Property Images ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS property_images (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  minio_url   TEXT NOT NULL,
-  original_url TEXT,
-  width       INTEGER,
-  height      INTEGER,
+  url         TEXT NOT NULL,             -- public MinIO URL (served via /img/)
+  minio_key   TEXT,                      -- object key inside the bucket
   is_primary  BOOLEAN DEFAULT false,
-  sort_order  INTEGER DEFAULT 0,
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
-
--- ── Property Embeddings (pgvector) ────────────────────────
-CREATE TABLE IF NOT EXISTS property_embeddings (
-  property_id UUID PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
-  embedding   VECTOR(1536),               -- OpenAI ada-002 dimensions
-  model       TEXT,
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_property_embeddings_vector
-  ON property_embeddings USING ivfflat(embedding vector_cosine_ops)
-  WITH (lists = 100);
 
 -- ── Contacts ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS contacts (
@@ -153,6 +157,7 @@ CREATE TABLE IF NOT EXISTS contact_channels (
 -- ── Agent Sessions ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_key TEXT UNIQUE,                -- '<channel>:<chatId>', conversation memory key
   channel_id  UUID REFERENCES contact_channels(id) ON DELETE CASCADE,
   messages    JSONB DEFAULT '[]',
   created_at  TIMESTAMPTZ DEFAULT NOW(),
@@ -160,15 +165,25 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 
 CREATE TABLE IF NOT EXISTS agent_queries (
-  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  session_id  UUID REFERENCES agent_sessions(id),
-  channel_id  UUID REFERENCES contact_channels(id),
-  query       TEXT NOT NULL,
-  response    TEXT,
-  tool_calls  JSONB DEFAULT '[]',
-  tokens_used INTEGER,
-  language    TEXT DEFAULT 'en',
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_id     UUID REFERENCES agent_sessions(id),
+  channel_id     UUID REFERENCES contact_channels(id),
+  user_id        TEXT,                    -- channel-native user id (telegram id, 'web', etc.)
+  channel        TEXT,                    -- 'telegram' / 'web' / ...
+  query          TEXT NOT NULL,
+  response       TEXT,
+  tool_calls     JSONB DEFAULT '[]',
+  intent         TEXT,                    -- property_search / zip_comparison / market_stats / general
+  zips_mentioned TEXT[],
+  price_min      NUMERIC,
+  price_max      NUMERIC,
+  beds_requested INTEGER,
+  tokens_in      INTEGER,
+  tokens_out     INTEGER,
+  tokens_used    INTEGER,
+  cost_usd       NUMERIC(12,6),
+  language       TEXT DEFAULT 'en',
+  created_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
 SELECT 'Schema created' AS status;

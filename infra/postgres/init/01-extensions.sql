@@ -1,11 +1,7 @@
 -- Run as superuser on propscout DB
 
--- Extensions
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-CREATE EXTENSION IF NOT EXISTS vector;
+-- Extensions — matches deployed postgres:16-alpine (no postgis/timescale/vector/pg_cron)
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- PropScout user (if not exists)

@@ -1,0 +1,10 @@
+[Unit]
+Description=PropScout daily Zillow scrape (upsert + image sync via webhook)
+After=propscout-api.service
+
+[Service]
+Type=oneshot
+# settings_id = the zillow row in apify_settings
+ExecStart=/usr/bin/curl -sf -X POST http://127.0.0.1:3100/api/apify/run \
+  -H "Content-Type: application/json" \
+  -d '{"settings_id":"9ca383bd-95e7-46bb-8ad6-cbf3d5d6b262","zip_codes":["85254","85251","85018"]}'

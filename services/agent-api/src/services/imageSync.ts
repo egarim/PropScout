@@ -29,15 +29,25 @@ export async function syncPropertyImages(propertyId: string, rawData: any): Prom
     }
   }
 
-  // Zillow photos array alternative
-  if (rawData.photos?.length) {
-    for (const p of rawData.photos.slice(0, 10)) {
-      const url = p.url || p.mixedSources?.jpeg?.[0]?.url;
+  // Zillow photos array alternative (detail scrape) — jpeg variants are sorted
+  // small→large, so take the last for full resolution
+  const photos = rawData.photos || rawData.originalPhotos || rawData.responsivePhotos;
+  if (photos?.length) {
+    for (const p of photos.slice(0, 10)) {
+      const jpeg = p.mixedSources?.jpeg;
+      const url = (typeof p === 'string' ? p : null) || p.url || (jpeg && jpeg[jpeg.length - 1]?.url);
       if (url) urls.push({ url, isPrimary: false });
     }
   }
 
   if (!urls.length) return 0;
+
+  // Dedupe and guarantee exactly one primary (cover queries rely on it)
+  const seen = new Set<string>();
+  const unique = urls.filter(u => !seen.has(u.url) && seen.add(u.url));
+  if (!unique.some(u => u.isPrimary)) unique[0].isPrimary = true;
+  urls.length = 0;
+  urls.push(...unique.slice(0, 10));
 
   // Delete old images for this property
   await db.query('DELETE FROM property_images WHERE property_id = $1', [propertyId]);

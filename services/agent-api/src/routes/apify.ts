@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { ApifyClient } from 'apify-client';
 import { db } from '../db';
 import { z } from 'zod';
+import { startDetailScrape, processDetailDataset } from '../services/detailScrape';
 
 const router = Router();
 
@@ -130,10 +131,11 @@ router.post('/run', async (req: Request, res: Response) => {
       webhooks: [{
         eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED'],
         requestUrl: webhookUrl,
+        // Apify template vars live under resource.* — bare {{runId}} arrives unrendered
         payloadTemplate: JSON.stringify({
-          runId: '{{runId}}',
-          status: '{{status}}',
-          datasetId: '{{defaultDatasetId}}',
+          runId: '{{resource.id}}',
+          status: '{{resource.status}}',
+          datasetId: '{{resource.defaultDatasetId}}',
         }),
       }],
     });
@@ -153,9 +155,18 @@ router.post('/run', async (req: Request, res: Response) => {
 
 // ── POST /apify/webhook ──────────────────────────────────
 router.post('/webhook', async (req: Request, res: Response) => {
-  const { runId, status, datasetId } = req.body;
+  const { runId, status, datasetId, kind } = req.body;
+  console.log(`Webhook received: run=${runId} status=${status} kind=${kind || 'scrape'}`);
 
   if (!runId) return res.status(400).json({ error: 'Missing runId' });
+
+  // Gallery (detail-scrape) runs have no scrape_jobs row — just sync images
+  if (kind === 'detail') {
+    if (status === 'SUCCEEDED' && datasetId) {
+      processDetailDataset(datasetId).catch(console.error);
+    }
+    return res.json({ ok: true });
+  }
 
   await db.query(
     `UPDATE scrape_jobs SET status = $1, finished_at = NOW()
@@ -170,7 +181,10 @@ router.post('/webhook', async (req: Request, res: Response) => {
         const { syncAllPropertyImages } = require('../services/imageSync');
         return syncAllPropertyImages(5);
       })
-      .then((r: any) => console.log(`Images synced: ${r.images} images for ${r.synced} properties`))
+      .then((r: any) => {
+        console.log(`Images synced: ${r.images} images for ${r.synced} properties`);
+        return startDetailScrape();
+      })
       .catch(console.error);
   }
   // Always sync final status
@@ -193,6 +207,39 @@ router.get('/runs', async (_req: Request, res: Response) => {
   `);
   res.json({ data: result.rows });
 });
+
+// ── Reconciler: recover scrape jobs whose webhook never processed ──
+// (observed twice: Apify dispatch gets 200 yet nothing runs; root cause
+// died with the old process — this sweep makes the pipeline self-healing)
+async function reconcileStuckJobs() {
+  const r = await db.query(
+    `SELECT apify_run_id FROM scrape_jobs
+     WHERE status = 'running' AND started_at < NOW() - INTERVAL '20 minutes'`
+  );
+  for (const row of r.rows) {
+    try {
+      const client = new ApifyClient({ token: process.env.APIFY_API_TOKEN! });
+      const run = await client.run(row.apify_run_id).get();
+      if (!run) continue;
+      if (run.status === 'SUCCEEDED') {
+        console.log(`Reconciler: recovering stuck run ${row.apify_run_id}`);
+        await processDataset(row.apify_run_id, String(run.defaultDatasetId));
+        const { syncAllPropertyImages } = require('../services/imageSync');
+        const imgs = await syncAllPropertyImages(5);
+        console.log(`Images synced: ${imgs.images} images for ${imgs.synced} properties`);
+        await startDetailScrape();
+      } else if (['FAILED', 'ABORTED', 'TIMED-OUT'].includes(run.status)) {
+        await db.query(
+          `UPDATE scrape_jobs SET status = 'failed', finished_at = NOW() WHERE apify_run_id = $1`,
+          [row.apify_run_id]
+        );
+      } // still running on Apify's side: leave it alone
+    } catch (err: any) {
+      console.error('Reconciler error:', row.apify_run_id, err.message);
+    }
+  }
+}
+setInterval(reconcileStuckJobs, 30 * 60 * 1000);
 
 // ── Async dataset processor ──────────────────────────────
 async function processDataset(runId: string, datasetId: string) {
@@ -221,6 +268,18 @@ async function processDataset(runId: string, datasetId: string) {
     'UPDATE scrape_jobs SET records_scraped = $1, status = $2 WHERE apify_run_id = $3',
     [count, count > 0 ? 'done' : 'failed', runId]
   );
+
+  // Listings that stopped appearing in scrapes are gone from the market —
+  // mark inactive so the agent stops quoting them (history trigger logs it)
+  if (count > 0) {
+    const stale = await db.query(
+      `UPDATE properties SET status = 'inactive'
+       WHERE last_scraped_at < NOW() - INTERVAL '3 days'
+         AND status IS DISTINCT FROM 'inactive'`
+    );
+    if (stale.rowCount) console.log(`Marked ${stale.rowCount} unseen properties inactive`);
+  }
+
   console.log(`Processed ${count} properties from run ${runId}`);
 }
 
