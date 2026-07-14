@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS contact_channels (
 -- ── Agent Sessions ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_key TEXT UNIQUE,                -- '<channel>:<chatId>', conversation memory key
   channel_id  UUID REFERENCES contact_channels(id) ON DELETE CASCADE,
   messages    JSONB DEFAULT '[]',
   created_at  TIMESTAMPTZ DEFAULT NOW(),

@@ -129,8 +129,9 @@ bot.onText(/\/scrape(.*)/, async (msg, match) => {
 });
 
 // ── /clear ────────────────────────────────────────────────
-bot.onText(/\/clear/, (msg) => {
+bot.onText(/\/clear/, async (msg) => {
   pendingResults.delete(msg.chat.id);
+  await axios.post(`${API_URL}/api/agent/clear`, { chatId: msg.chat.id, channel: 'telegram' }).catch(() => {});
   bot.sendMessage(msg.chat.id, '🧹 Conversation cleared.');
 });
 

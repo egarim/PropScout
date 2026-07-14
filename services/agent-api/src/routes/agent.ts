@@ -161,7 +161,26 @@ Format prices with $ and commas. Keep answers concise.
 Respond in the same language the user writes in (English or Spanish).`;
 
 interface Message { role: string; content: string; tool_call_id?: string; name?: string; tool_calls?: any[] }
-const history = new Map<number, Message[]>();
+
+// Conversation memory: in-process cache over agent_sessions (survives restarts).
+// Keyed per channel+chat — Telegram DMs are per-user; web is per-browser session.
+const history = new Map<string, Message[]>();
+
+async function loadHistory(key: string): Promise<Message[]> {
+  const cached = history.get(key);
+  if (cached) return cached;
+  const r = await db.query('SELECT messages FROM agent_sessions WHERE session_key = $1', [key]);
+  return r.rows[0]?.messages || [];
+}
+
+function saveHistory(key: string, msgs: Message[]) {
+  history.set(key, msgs);
+  db.query(
+    `INSERT INTO agent_sessions (session_key, messages) VALUES ($1, $2)
+     ON CONFLICT (session_key) DO UPDATE SET messages = $2, updated_at = NOW()`,
+    [key, JSON.stringify(msgs)]
+  ).catch(err => console.error('Session save error:', err.message));
+}
 
 // LLM endpoint — defaults to the fleet LiteLLM gateway (mesh); swap model/provider via env
 const LLM_BASE_URL = process.env.LLM_BASE_URL || 'http://100.64.0.4:4000/v1';
@@ -181,14 +200,21 @@ async function llmChat(messages: Message[], withToolChoice = false) {
   });
 }
 
+router.post('/clear', async (req: Request, res: Response) => {
+  const key = `${req.body.channel || 'web'}:${req.body.chatId || 0}`;
+  history.delete(key);
+  await db.query('DELETE FROM agent_sessions WHERE session_key = $1', [key]);
+  res.json({ ok: true });
+});
+
 router.post('/chat', async (req: Request, res: Response) => {
   const { message, chatId, userId, channel = 'web' } = req.body;
-  const id = chatId || 0;
+  const sessionKey = `${channel}:${chatId || 0}`;
   if (!message) return res.status(400).json({ error: 'message required' });
 
   if (!LLM_API_KEY) return res.json({ reply: '⚠️ AI not configured. Add LLM_API_KEY.' });
 
-  const msgs: Message[] = history.get(id) || [];
+  const msgs: Message[] = await loadHistory(sessionKey);
   msgs.push({ role: 'user', content: message });
 
   const recent = msgs.slice(-12);
@@ -216,7 +242,7 @@ router.post('/chat', async (req: Request, res: Response) => {
 
     const reply = assistantMsg.content || '';
     msgs.push({ role: 'assistant', content: reply });
-    history.set(id, msgs.slice(-20));
+    saveHistory(sessionKey, msgs.slice(-20));
 
     // Collect any property results from tool calls for rich rendering
     const properties: any[] = [];

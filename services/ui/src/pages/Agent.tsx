@@ -43,7 +43,14 @@ export default function Agent() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const chatId = useRef(Math.floor(Math.random() * 999999));
+  // Stable per-browser session so conversation memory survives reloads
+  const chatId = useRef((() => {
+    const saved = localStorage.getItem('propscout_chat_id');
+    if (saved) return Number(saved);
+    const id = Math.floor(Math.random() * 2_000_000_000);
+    localStorage.setItem('propscout_chat_id', String(id));
+    return id;
+  })());
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
