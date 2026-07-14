@@ -166,17 +166,27 @@ async function sendPropertyDetail(chatId: number, prop: any) {
     (status ? `📋 ${status.replace(/_/g, ' ')}\n` : '') +
     `📍 ${prop.zip_code || ''}`;
 
-  // Fetch cover image from DB if not on object
-  let imageUrl = prop.cover_image;
-  if (!imageUrl) {
-    try {
-      const r = await axios.get(`${API_URL}/api/properties/${prop.id}`);
-      imageUrl = r.data.data?.images?.[0]?.url;
-    } catch {}
-  }
+  // Fetch all images from DB (primary first)
+  let images: string[] = [];
+  try {
+    const r = await axios.get(`${API_URL}/api/properties/${prop.id}`);
+    images = (r.data.data?.images || []).map((i: any) => i.url);
+  } catch {}
+  if (!images.length && prop.cover_image) images = [prop.cover_image];
 
-  if (imageUrl) {
-    await bot.sendPhoto(chatId, imageUrl, { caption, parse_mode: 'Markdown' }).catch(async () => {
+  if (images.length > 1) {
+    const media = images.slice(0, 10).map((url, i) => ({
+      type: 'photo' as const,
+      media: url,
+      ...(i === 0 ? { caption, parse_mode: 'Markdown' as const } : {}),
+    }));
+    await bot.sendMediaGroup(chatId, media).catch(async () => {
+      await bot.sendPhoto(chatId, images[0], { caption, parse_mode: 'Markdown' }).catch(async () => {
+        await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
+      });
+    });
+  } else if (images.length === 1) {
+    await bot.sendPhoto(chatId, images[0], { caption, parse_mode: 'Markdown' }).catch(async () => {
       await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
     });
   } else {

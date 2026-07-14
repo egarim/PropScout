@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { ApifyClient } from 'apify-client';
 import { db } from '../db';
 import { z } from 'zod';
+import { startDetailScrape, processDetailDataset } from '../services/detailScrape';
 
 const router = Router();
 
@@ -154,9 +155,17 @@ router.post('/run', async (req: Request, res: Response) => {
 
 // ── POST /apify/webhook ──────────────────────────────────
 router.post('/webhook', async (req: Request, res: Response) => {
-  const { runId, status, datasetId } = req.body;
+  const { runId, status, datasetId, kind } = req.body;
 
   if (!runId) return res.status(400).json({ error: 'Missing runId' });
+
+  // Gallery (detail-scrape) runs have no scrape_jobs row — just sync images
+  if (kind === 'detail') {
+    if (status === 'SUCCEEDED' && datasetId) {
+      processDetailDataset(datasetId).catch(console.error);
+    }
+    return res.json({ ok: true });
+  }
 
   await db.query(
     `UPDATE scrape_jobs SET status = $1, finished_at = NOW()
@@ -171,7 +180,10 @@ router.post('/webhook', async (req: Request, res: Response) => {
         const { syncAllPropertyImages } = require('../services/imageSync');
         return syncAllPropertyImages(5);
       })
-      .then((r: any) => console.log(`Images synced: ${r.images} images for ${r.synced} properties`))
+      .then((r: any) => {
+        console.log(`Images synced: ${r.images} images for ${r.synced} properties`);
+        return startDetailScrape();
+      })
       .catch(console.error);
   }
   // Always sync final status
