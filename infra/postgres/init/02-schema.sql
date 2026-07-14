@@ -93,7 +93,8 @@ CREATE TABLE IF NOT EXISTS property_history (
   old_price   NUMERIC(12,2),
   price       NUMERIC(12,2),
   status      TEXT,
-  event       TEXT NOT NULL              -- 'listed','price_drop','price_increase','status_change'
+  event       TEXT NOT NULL,             -- 'listed','price_drop','price_increase','status_change'
+  alerted_at  TIMESTAMPTZ                -- set once the drop was sent to subscribers
 );
 
 CREATE INDEX IF NOT EXISTS idx_property_history_property
@@ -150,6 +151,7 @@ CREATE TABLE IF NOT EXISTS contact_channels (
   approved_by TEXT,
   last_seen   TIMESTAMPTZ,
   query_count INTEGER DEFAULT 0,
+  alerts_enabled BOOLEAN DEFAULT false,   -- opted in to price-drop DMs (/alerts on)
   created_at  TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(channel, identifier)
 );
