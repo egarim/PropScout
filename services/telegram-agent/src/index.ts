@@ -5,6 +5,7 @@ import { getStats, getZipSummary, searchProperties, getRecentJobs } from './quer
 import axios from 'axios';
 
 import { ensureAccess, isAdmin, setAccess, listUsers } from './access';
+import { sendPriceDropAlerts, setAlerts } from './alerts';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const API_URL = process.env.AGENT_API_URL || 'http://127.0.0.1:3100';
@@ -44,6 +45,7 @@ bot.onText(/\/help/, async (msg) => {
     `/jobs — Recent scrape jobs\n` +
     `/scrape <zip> [zip2...] — Trigger a scrape\n\n` +
     `*Other*\n` +
+    `/alerts on|off — Price-drop alerts\n` +
     `/clear — Reset conversation\n\n` +
     `Or just ask naturally:\n` +
     `_"3-bed homes under $600k in 85254"_\n` +
@@ -133,6 +135,17 @@ bot.onText(/\/clear/, async (msg) => {
   pendingResults.delete(msg.chat.id);
   await axios.post(`${API_URL}/api/agent/clear`, { chatId: msg.chat.id, channel: 'telegram' }).catch(() => {});
   bot.sendMessage(msg.chat.id, '🧹 Conversation cleared.');
+});
+
+// ── /alerts on|off ────────────────────────────────────────
+bot.onText(/\/alerts(?:\s+(on|off))?/, async (msg, match) => {
+  if (!(await ensureAccess(bot, msg))) return;
+  const arg = match?.[1];
+  if (!arg) return bot.sendMessage(msg.chat.id, '🔔 Usage: /alerts on — daily price-drop alerts · /alerts off — stop them');
+  await setAlerts(String(msg.from?.id ?? msg.chat.id), arg === 'on');
+  bot.sendMessage(msg.chat.id, arg === 'on'
+    ? '🔔 Price-drop alerts ON — you\'ll get a digest when listings drop in price.'
+    : '🔕 Price-drop alerts OFF.');
 });
 
 // ── /users (admin) ────────────────────────────────────────
@@ -262,5 +275,8 @@ bot.on('message', async (msg) => {
     bot.sendMessage(msg.chat.id, '❌ Error. Try again.');
   }
 });
+
+// Hourly price-drop digest (idempotent via property_history.alerted_at)
+setInterval(() => sendPriceDropAlerts(bot).catch(err => console.error('Alerts error:', err.message)), 60 * 60 * 1000);
 
 console.log('PropScout Telegram agent started ✅');
