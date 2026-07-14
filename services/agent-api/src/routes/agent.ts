@@ -73,6 +73,27 @@ async function tool_price_changes(days = 7, zip?: string, event = 'price_drop') 
   return r.rows;
 }
 
+async function tool_nearby_properties(lat: number, lng: number, radius_km = 10, limit = 8) {
+  const r = await db.query(
+    `SELECT * FROM (
+       SELECT p.id, p.address, p.zip_code, p.current_price,
+              p.details->>'beds' AS beds, p.details->>'baths' AS baths,
+              pi.url AS cover_image,
+              ROUND((6371 * acos(LEAST(1,
+                cos(radians($1)) * cos(radians(p.lat)) * cos(radians(p.lng) - radians($2))
+                + sin(radians($1)) * sin(radians(p.lat)))))::numeric, 1) AS distance_km
+       FROM properties p
+       LEFT JOIN property_images pi ON pi.property_id = p.id AND pi.is_primary = true
+       WHERE p.lat IS NOT NULL AND p.lng IS NOT NULL
+         AND p.current_price IS NOT NULL AND p.status IS DISTINCT FROM 'inactive'
+     ) t
+     WHERE distance_km <= $3
+     ORDER BY distance_km ASC LIMIT $4`,
+    [lat, lng, Math.min(radius_km, 100), Math.min(limit, 10)]
+  );
+  return r.rows;
+}
+
 // Tool definitions for OpenRouter function calling
 const TOOLS = [
   {
@@ -96,6 +117,23 @@ const TOOLS = [
           max_price: { type: 'number',  description: 'Maximum price in USD' },
           beds:      { type: 'number',  description: 'Minimum number of bedrooms' },
           limit:     { type: 'number',  description: 'Max results to return (default 5, max 10)' },
+        },
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'nearby_properties',
+      description: 'Find listings closest to a coordinate, nearest first with distance_km. Use when the user names a place or landmark — geocode it to lat/lng yourself (Phoenix metro area).',
+      parameters: {
+        type: 'object',
+        required: ['lat', 'lng'],
+        properties: {
+          lat:       { type: 'number', description: 'Latitude' },
+          lng:       { type: 'number', description: 'Longitude' },
+          radius_km: { type: 'number', description: 'Search radius in km (default 10, max 100)' },
+          limit:     { type: 'number', description: 'Max results (default 8, max 10)' },
         },
       }
     }
@@ -146,6 +184,10 @@ async function callTool(name: string, args: any): Promise<string> {
     }
     if (name === 'price_changes') {
       const r = await tool_price_changes(args.days, args.zip, args.event);
+      return JSON.stringify(r);
+    }
+    if (name === 'nearby_properties') {
+      const r = await tool_nearby_properties(args.lat, args.lng, args.radius_km, args.limit);
       return JSON.stringify(r);
     }
     return JSON.stringify({ error: 'Unknown tool' });
@@ -247,7 +289,7 @@ router.post('/chat', async (req: Request, res: Response) => {
     // Collect any property results from tool calls for rich rendering
     const properties: any[] = [];
     for (const m of recent) {
-      if (m.role === 'tool' && m.name === 'search_properties') {
+      if (m.role === 'tool' && (m.name === 'search_properties' || m.name === 'nearby_properties')) {
         try {
           const items = JSON.parse(m.content || '[]');
           if (Array.isArray(items)) properties.push(...items.filter((p: any) => p.cover_image));

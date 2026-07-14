@@ -40,7 +40,8 @@ bot.onText(/\/help/, async (msg) => {
     `*Data*\n` +
     `/stats — Market overview\n` +
     `/zips — Summary by zip code\n` +
-    `/search <zip> [max price] — Find properties\n\n` +
+    `/search <zip> [max price] — Find properties\n` +
+    `📍 Share a location — nearest listings\n\n` +
     `*Scraping*\n` +
     `/jobs — Recent scrape jobs\n` +
     `/scrape <zip> [zip2...] — Trigger a scrape\n\n` +
@@ -242,6 +243,24 @@ async function sendPropertyDetail(chatId: number, prop: any) {
     await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
   }
 }
+
+// ── Shared location → nearest listings ───────────────────
+bot.on('location', async (msg) => {
+  if (!msg.location) return;
+  if (!(await ensureAccess(bot, msg))) return;
+  const { latitude, longitude } = msg.location;
+  try {
+    const r = await axios.get(`${API_URL}/api/properties/nearby`, {
+      params: { lat: latitude, lng: longitude, radius_km: 15, limit: 8 },
+    });
+    const props = r.data.data || [];
+    if (!props.length) return bot.sendMessage(msg.chat.id, '📍 No active listings within 15 km of that location.');
+    const withDist = props.map((p: any) => ({ ...p, address: `${(p.address || '').split(',')[0]} · ${p.distance_km} km` }));
+    sendNumberedList(msg.chat.id, withDist, 'Nearest listings');
+  } catch {
+    bot.sendMessage(msg.chat.id, '❌ Location search failed. Try again.');
+  }
+});
 
 // ── Free text → AI or number picker ──────────────────────
 bot.on('message', async (msg) => {
