@@ -1,6 +1,6 @@
 # 🏠 PropScout
 
-Real estate data platform for the Phoenix AZ market — daily scraping, structured storage, self-hosted images, and an AI agent you talk to via Telegram or the web.
+Real estate data platform for the Phoenix AZ market — daily scraping, structured storage, self-hosted images, and an AI agent you talk to via Telegram ([@PropScout_bot](https://t.me/PropScout_bot)) or the web ([propscout.xari.net](https://propscout.xari.net)).
 
 ## What it does
 
