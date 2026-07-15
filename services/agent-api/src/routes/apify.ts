@@ -131,12 +131,9 @@ router.post('/run', async (req: Request, res: Response) => {
       webhooks: [{
         eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED'],
         requestUrl: webhookUrl,
-        // Apify template vars live under resource.* — bare {{runId}} arrives unrendered
-        payloadTemplate: JSON.stringify({
-          runId: '{{resource.id}}',
-          status: '{{resource.status}}',
-          datasetId: '{{resource.defaultDatasetId}}',
-        }),
+        // Apify renders only whole-object variables ({{resource}}, {{eventData}})
+        // — dotted paths like {{resource.id}} arrive as literal text
+        payloadTemplate: '{"resource": {{resource}}}',
       }],
     });
 
@@ -155,7 +152,12 @@ router.post('/run', async (req: Request, res: Response) => {
 
 // ── POST /apify/webhook ──────────────────────────────────
 router.post('/webhook', async (req: Request, res: Response) => {
-  const { runId, status, datasetId, kind } = req.body;
+  // Apify sends {resource: <run object>}; flat fields kept for manual replays
+  const resource = req.body.resource || {};
+  const runId = req.body.runId || resource.id;
+  const status = req.body.status || resource.status;
+  const datasetId = req.body.datasetId || resource.defaultDatasetId;
+  const kind = req.body.kind;
   console.log(`Webhook received: run=${runId} status=${status} kind=${kind || 'scrape'}`);
 
   if (!runId) return res.status(400).json({ error: 'Missing runId' });

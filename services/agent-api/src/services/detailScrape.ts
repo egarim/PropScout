@@ -32,12 +32,8 @@ export async function startDetailScrape(): Promise<string | null> {
       webhooks: [{
         eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED'],
         requestUrl: webhookUrl,
-        payloadTemplate: JSON.stringify({
-          runId: '{{resource.id}}',
-          status: '{{resource.status}}',
-          datasetId: '{{resource.defaultDatasetId}}',
-          kind: 'detail',
-        }),
+        // whole-object variable only — dotted paths don't render (see apify.ts)
+        payloadTemplate: '{"resource": {{resource}}, "kind": "detail"}',
       }],
     }
   );

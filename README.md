@@ -110,7 +110,8 @@ hourly     alert sweep: un-alerted price drops → Telegram digest
 
 Ops notes:
 - Deployed on a single host as three systemd services: `propscout-api` (:3100), `propscout-telegram`, `propscout-web` (:3200), behind nginx with basic auth (webhook and `/img/` exempt).
-- Apify webhook payloads **must** use `{{resource.id}}`-style variables — bare `{{runId}}` arrives unrendered and silently no-ops.
+- Apify webhook payload templates render **only whole-object variables** (`{{resource}}`, `{{eventData}}`) — dotted paths like `{{resource.id}}` and bare `{{runId}}` arrive as literal text and silently no-op. Embed `{"resource": {{resource}}}` and read fields server-side.
+- Apify free plan = $5/month — gallery scrapes are pay-per-result and exhaust it fast; when spent, runs return ~0 items and detail runs refuse to start ("maximum charged results must be greater than zero").
 - Key env (`agent-api/.env`): `APIFY_API_TOKEN`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_PRICE_IN_PER_M`/`OUT_PER_M` (cost logging), `DETAIL_SCRAPE_LIMIT`, `PUBLIC_URL`. Telegram: `TELEGRAM_BOT_TOKEN`, `ADMIN_TELEGRAM_IDS` (empty = open dev mode), `AGENT_API_URL`.
 
 ## Getting started

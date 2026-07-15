@@ -288,8 +288,15 @@ router.post('/chat', async (req: Request, res: Response) => {
 
       const toolResults: Message[] = [];
       for (const tc of assistantMsg.tool_calls) {
-        const args = JSON.parse(tc.function.arguments || '{}');
-        const result = await callTool(tc.function.name, args);
+        // LLM occasionally emits malformed JSON args — feed the error back as
+        // a tool result so it can retry, instead of 500ing the whole chat
+        let args: any = {};
+        let parseError: string | null = null;
+        try { args = JSON.parse(tc.function.arguments || '{}'); }
+        catch (e: any) { parseError = e.message; }
+        const result = parseError
+          ? JSON.stringify({ error: `Invalid JSON arguments: ${parseError}. Retry the tool call with valid JSON.` })
+          : await callTool(tc.function.name, args);
         toolResults.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: result });
       }
       recent.push(...toolResults);
