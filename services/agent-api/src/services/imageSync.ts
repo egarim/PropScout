@@ -1,6 +1,7 @@
 import { db } from '../db';
 import * as Minio from 'minio';
 import axios from 'axios';
+import { createHash } from 'crypto';
 
 const minio = new Minio.Client({
   endPoint: '127.0.0.1',
@@ -82,7 +83,9 @@ async function downloadToMinio(url: string, propertyId: string): Promise<string>
 
   const contentType = response.headers['content-type'] || 'image/jpeg';
   const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
-  const hash = Buffer.from(url).toString('base64').replace(/[^a-z0-9]/gi, '').slice(0, 12);
+  // md5 of the full URL — base64-prefix slicing collided (all Zillow photo
+  // URLs share a prefix), overwriting every gallery photo with the last one
+  const hash = createHash('md5').update(url).digest('hex').slice(0, 16);
   const key = `${propertyId}/${hash}.${ext}`;
 
   const buffer = Buffer.from(response.data);
