@@ -312,7 +312,7 @@ router.post('/chat', async (req: Request, res: Response) => {
     // Collect any property results from tool calls for rich rendering
     const properties: any[] = [];
     for (const m of recent) {
-      if (m.role === 'tool' && (m.name === 'search_properties' || m.name === 'nearby_properties')) {
+      if (m.role === 'tool' && ['search_properties', 'nearby_properties', 'price_changes'].includes(m.name || '')) {
         try {
           const items = JSON.parse(m.content || '[]');
           if (Array.isArray(items)) properties.push(...items.filter((p: any) => p.cover_image));
