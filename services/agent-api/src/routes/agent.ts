@@ -32,6 +32,9 @@ async function tool_search_properties(zip?: string, min_price?: number, max_pric
     `SELECT p.id, p.address, p.zip_code, p.current_price, p.status, p.property_type,
             p.details->>'beds' as beds, p.details->>'baths' as baths, p.details->>'sqFt' as sqft,
             (p.raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int AS days_on_market,
+            ROUND(p.current_price / NULLIF((p.details->>'sqFt')::numeric, 0)) AS price_per_sqft,
+            (SELECT count(*) FROM property_history h
+             WHERE h.property_id = p.id AND h.event = 'price_drop') AS price_cuts,
             pi.url AS cover_image
      FROM properties p
      LEFT JOIN property_images pi ON pi.property_id = p.id AND pi.is_primary = true
@@ -48,7 +51,10 @@ async function tool_zip_summary(zip?: string) {
     SELECT zip_code, COUNT(*) as count,
       ROUND(AVG(current_price)) as avg_price,
       MIN(current_price) as min_price,
-      MAX(current_price) as max_price
+      MAX(current_price) as max_price,
+      ROUND((percentile_cont(0.5) WITHIN GROUP
+        (ORDER BY current_price / NULLIF((details->>'sqFt')::numeric, 0)))::numeric) as median_price_per_sqft,
+      ROUND(AVG((raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int)) as avg_days_on_market
     FROM properties ${where}
     GROUP BY zip_code ORDER BY count DESC LIMIT 15
   `);

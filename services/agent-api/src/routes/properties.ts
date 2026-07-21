@@ -69,12 +69,37 @@ router.get('/nearby', async (req: Request, res: Response) => {
 });
 
 router.get('/:id', async (req: Request, res: Response) => {
-  const [prop, images] = await Promise.all([
+  const [prop, images, context] = await Promise.all([
     db.query('SELECT * FROM properties WHERE id = $1', [req.params.id]),
     db.query('SELECT * FROM property_images WHERE property_id = $1 ORDER BY is_primary DESC', [req.params.id]),
+    // Market context: $/sqft vs zip median, price-cut history, raw_data extras
+    db.query(
+      `SELECT
+         (p.raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int AS days_on_market,
+         (p.raw_data->'hdpData'->'homeInfo'->>'taxAssessedValue')::numeric AS tax_assessed,
+         p.raw_data->>'brokerName' AS broker,
+         p.raw_data->>'yearBuilt' AS year_built,
+         p.raw_data->>'description' AS description,
+         ROUND(p.current_price / NULLIF((p.details->>'sqFt')::numeric, 0)) AS price_per_sqft,
+         (SELECT ROUND((percentile_cont(0.5) WITHIN GROUP
+            (ORDER BY z.current_price / NULLIF((z.details->>'sqFt')::numeric, 0)))::numeric)
+          FROM properties z
+          WHERE z.zip_code = p.zip_code AND z.status IS DISTINCT FROM 'inactive'
+            AND z.current_price IS NOT NULL AND (z.details->>'sqFt')::numeric > 0) AS zip_median_ppsqft,
+         (SELECT count(*) FROM property_history h
+          WHERE h.property_id = p.id AND h.event = 'price_drop') AS price_cuts,
+         (SELECT COALESCE(SUM(h.old_price - h.price), 0) FROM property_history h
+          WHERE h.property_id = p.id AND h.event = 'price_drop') AS total_cut
+       FROM properties p WHERE p.id = $1`,
+      [req.params.id]
+    ),
   ]);
   if (!prop.rows[0]) return res.status(404).json({ error: 'Not found' });
-  res.json({ data: { ...prop.rows[0], images: images.rows } });
+  const ctx = context.rows[0] || {};
+  if (ctx.price_per_sqft && ctx.zip_median_ppsqft) {
+    ctx.pct_vs_area = Math.round((ctx.price_per_sqft / ctx.zip_median_ppsqft - 1) * 100);
+  }
+  res.json({ data: { ...prop.rows[0], ...ctx, images: images.rows } });
 });
 
 export default router;

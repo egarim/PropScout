@@ -208,23 +208,38 @@ async function sendPropertyDetail(chatId: number, prop: any) {
   const sqft   = prop.sqft  || prop.details?.sqFt;
   const status = prop.status || prop.statusType || '';
 
-  const caption =
+  const base =
     `🏠 *${prop.address || 'N/A'}*\n` +
     `💰 *${price}*\n` +
     (beds   ? `🛏 ${beds} bedrooms\n`   : '') +
     (baths  ? `🚿 ${baths} bathrooms\n` : '') +
     (sqft   ? `📐 ${Number(sqft).toLocaleString()} sqft\n` : '') +
     (status ? `📋 ${status.replace(/_/g, ' ')}\n` : '') +
-    (prop.days_on_market != null ? `📅 ${prop.days_on_market} days on market\n` : '') +
     `📍 ${prop.zip_code || ''}`;
 
-  // Fetch all images from DB (primary first)
+  // Fetch images + market context (detail endpoint computes both)
   let images: string[] = [];
+  let extra = '';
   try {
     const r = await axios.get(`${API_URL}/api/properties/${prop.id}`);
-    images = (r.data.data?.images || []).map((i: any) => i.url);
+    const d2 = r.data.data || {};
+    images = (d2.images || []).map((i: any) => i.url);
+    const ctxLines: string[] = [];
+    if (d2.price_per_sqft) {
+      let line = `💲 ${fmt(d2.price_per_sqft)}/sqft`;
+      if (d2.pct_vs_area != null) line += d2.pct_vs_area <= 0
+        ? ` (*${Math.abs(d2.pct_vs_area)}% below* area median)`
+        : ` (${d2.pct_vs_area}% above area median)`;
+      ctxLines.push(line);
+    }
+    if (d2.days_on_market != null) ctxLines.push(`📅 ${d2.days_on_market} days on market`);
+    if (Number(d2.price_cuts) > 0) ctxLines.push(`✂️ ${d2.price_cuts} price cut${d2.price_cuts > 1 ? 's' : ''} (−${fmt(d2.total_cut)})`);
+    if (d2.tax_assessed) ctxLines.push(`🏷 Assessed: ${fmt(d2.tax_assessed)}`);
+    if (d2.year_built) ctxLines.push(`🏗 Built ${d2.year_built}`);
+    if (ctxLines.length) extra = '\n' + ctxLines.join('\n');
   } catch {}
   if (!images.length && prop.cover_image) images = [prop.cover_image];
+  const caption = base + extra;
 
   if (images.length > 1) {
     const media = images.slice(0, 10).map((url, i) => ({

@@ -53,12 +53,16 @@ export async function processDetailDataset(datasetId: string) {
     const propertyId = r.rows[0]?.id;
     if (!propertyId) continue;
     try {
-      // persist the photo set so galleries can re-sync without re-scraping
+      // persist photos (re-sync without re-scraping) + descriptive extras
       const photos = item.photos || item.originalPhotos || item.responsivePhotos;
-      if (photos?.length) {
+      const extras: Record<string, any> = {};
+      if (photos?.length) extras.photos = photos.slice(0, 10);
+      if (item.description) extras.description = String(item.description).slice(0, 2000);
+      if (item.yearBuilt) extras.yearBuilt = item.yearBuilt;
+      if (Object.keys(extras).length) {
         await db.query(
-          `UPDATE properties SET raw_data = raw_data || jsonb_build_object('photos', $2::jsonb) WHERE id = $1`,
-          [propertyId, JSON.stringify(photos.slice(0, 10))]
+          `UPDATE properties SET raw_data = raw_data || $2::jsonb WHERE id = $1`,
+          [propertyId, JSON.stringify(extras)]
         );
       }
       const n = await syncPropertyImages(propertyId, item);
