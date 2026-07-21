@@ -215,6 +215,7 @@ async function sendPropertyDetail(chatId: number, prop: any) {
     (baths  ? `🚿 ${baths} bathrooms\n` : '') +
     (sqft   ? `📐 ${Number(sqft).toLocaleString()} sqft\n` : '') +
     (status ? `📋 ${status.replace(/_/g, ' ')}\n` : '') +
+    (prop.days_on_market != null ? `📅 ${prop.days_on_market} days on market\n` : '') +
     `📍 ${prop.zip_code || ''}`;
 
   // Fetch all images from DB (primary first)

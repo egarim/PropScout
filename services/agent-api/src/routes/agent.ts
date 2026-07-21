@@ -31,6 +31,7 @@ async function tool_search_properties(zip?: string, min_price?: number, max_pric
   const r = await db.query(
     `SELECT p.id, p.address, p.zip_code, p.current_price, p.status, p.property_type,
             p.details->>'beds' as beds, p.details->>'baths' as baths, p.details->>'sqFt' as sqft,
+            (p.raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int AS days_on_market,
             pi.url AS cover_image
      FROM properties p
      LEFT JOIN property_images pi ON pi.property_id = p.id AND pi.is_primary = true
@@ -61,6 +62,7 @@ async function tool_price_changes(days = 7, zip?: string, event = 'price_drop') 
   const r = await db.query(
     `SELECT p.id, p.address, p.zip_code, h.old_price, h.price AS new_price,
             h.old_price - h.price AS drop_amount, h.time::date AS changed_on,
+            (p.raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int AS days_on_market,
             pi.url AS cover_image
      FROM property_history h
      JOIN properties p ON p.id = h.property_id
@@ -78,6 +80,7 @@ async function tool_nearby_properties(lat: number, lng: number, radius_km = 10, 
     `SELECT * FROM (
        SELECT p.id, p.address, p.zip_code, p.current_price,
               p.details->>'beds' AS beds, p.details->>'baths' AS baths,
+              (p.raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int AS days_on_market,
               pi.url AS cover_image,
               ROUND((6371 * acos(LEAST(1,
                 cos(radians($1)) * cos(radians(p.lat)) * cos(radians(p.lng) - radians($2))

@@ -46,13 +46,18 @@ export async function searchProperties(opts: {
   if (opts.beds) { conds.push(`(details->>'beds')::int >= $${i++}`); vals.push(opts.beds); }
   if (opts.type) { conds.push(`property_type ILIKE $${i++}`); vals.push(`%${opts.type}%`); }
 
-  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  conds.push(`status IS DISTINCT FROM 'inactive'`);
+  const where = `WHERE ${conds.join(' AND ')}`;
   const lim = Math.min(opts.limit || 5, 10);
 
   const r = await db.query(
-    `SELECT address, zip_code, current_price, property_type, status, details
-     FROM properties ${where}
-     ORDER BY current_price ASC NULLS LAST
+    `SELECT p.id, p.address, p.zip_code, p.current_price, p.property_type, p.status, p.details,
+            (p.raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int AS days_on_market,
+            pi.url AS cover_image
+     FROM properties p
+     LEFT JOIN property_images pi ON pi.property_id = p.id AND pi.is_primary = true
+     ${where}
+     ORDER BY p.current_price ASC NULLS LAST
      LIMIT ${lim}`,
     vals
   );

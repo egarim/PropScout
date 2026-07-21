@@ -20,6 +20,7 @@ router.get('/', async (req: Request, res: Response) => {
   const [rows, countRow] = await Promise.all([
     db.query(
       `SELECT p.*,
+              (p.raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int AS days_on_market,
               pi.url AS cover_image
        FROM properties p
        LEFT JOIN property_images pi ON pi.property_id = p.id AND pi.is_primary = true
@@ -50,6 +51,7 @@ router.get('/nearby', async (req: Request, res: Response) => {
     `SELECT * FROM (
        SELECT p.id, p.address, p.zip_code, p.current_price, p.status, p.lat, p.lng,
               p.details->>'beds' AS beds, p.details->>'baths' AS baths, p.details->>'sqFt' AS sqft,
+              (p.raw_data->'hdpData'->'homeInfo'->>'daysOnZillow')::int AS days_on_market,
               pi.url AS cover_image,
               ROUND((6371 * acos(LEAST(1,
                 cos(radians($1)) * cos(radians(p.lat)) * cos(radians(p.lng) - radians($2))
