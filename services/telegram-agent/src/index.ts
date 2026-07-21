@@ -15,8 +15,7 @@ if (!TOKEN) { console.error('TELEGRAM_BOT_TOKEN required'); process.exit(1); }
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// Store last search results per chat so user can pick by number
-const pendingResults = new Map<number, any[]>();
+import { pendingResults } from './state';
 
 function fmt(n: any) {
   return n != null ? `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : 'N/A';
@@ -187,11 +186,13 @@ function sendNumberedList(chatId: number, props: any[], title: string) {
   pendingResults.set(chatId, props);
 
   const lines = props.map((p, i) => {
-    const price = fmt(p.current_price);
+    const price = fmt(p.current_price ?? p.new_price);
     const beds  = p.beds  || p.details?.beds  ? `${p.beds || p.details?.beds}bd` : '';
     const baths = p.baths || p.details?.baths ? `${p.baths || p.details?.baths}ba` : '';
     const addr  = (p.address || '').split(',')[0];
-    return `*${i + 1}.* ${addr}\n     ${price} · ${[beds, baths].filter(Boolean).join(' ')}`;
+    // price-drop rows carry old_price — show the cut inline
+    const drop = p.old_price != null ? `📉 ${fmt(p.old_price)} → ` : '';
+    return `*${i + 1}.* ${addr}\n     ${drop}${price} · ${[beds, baths].filter(Boolean).join(' ')}`.replace(/ · $/, '');
   }).join('\n\n');
 
   bot.sendMessage(chatId,

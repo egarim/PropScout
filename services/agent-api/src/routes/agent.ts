@@ -220,8 +220,8 @@ FORMATTING — you are writing inside a Telegram chat bubble. Telegram renders N
 - List properties as short numbered blocks, one property per block:
 1. 📍 *7009 E Acoma Dr #2102* — *$488,900*
    🛏 3 bd · 🚿 2 ba · 📐 1,264 sqft · Apartment
-- Maximum ~8 lines of prose besides the listing blocks. End with one short follow-up question.
-- If you listed properties, remind: reply with a number to see photos.`,
+- When a tool returned property listings, do NOT enumerate them yourself — the app appends a numbered list (with photos on pick) right after your message. Give only 1–3 lines of insight (best deal, notable pattern), then say the list follows and the user can reply with a number for photos.
+- Maximum ~8 lines of prose. End with one short follow-up question.`,
   web: `
 FORMATTING — the web chat renders GitHub-flavored markdown. Tables are fine for comparisons; keep them small.`,
 };
@@ -324,7 +324,10 @@ router.post('/chat', async (req: Request, res: Response) => {
       if (m.role === 'tool' && ['search_properties', 'nearby_properties', 'price_changes'].includes(m.name || '')) {
         try {
           const items = JSON.parse(m.content || '[]');
-          if (Array.isArray(items)) properties.push(...items.filter((p: any) => p.cover_image));
+          if (Array.isArray(items)) properties.push(...items
+            .filter((p: any) => p.cover_image)
+            // normalize price_changes rows so pickers/captions read one shape
+            .map((p: any) => p.new_price != null ? { ...p, current_price: p.new_price } : p));
         } catch {}
       }
     }

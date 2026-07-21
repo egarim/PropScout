@@ -1,4 +1,5 @@
 import { db } from './db';
+import { pendingResults } from './state';
 import type TelegramBot from 'node-telegram-bot-api';
 
 const fmt = (n: any) => `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -25,27 +26,31 @@ export async function sendPriceDropAlerts(bot: TelegramBot) {
 
   if (subs.rows.length) {
     const top = drops.rows.slice(0, 10);
-    const lines = top.map(d => {
-      const pct = d.old_price ? Math.round((1 - d.price / d.old_price) * 100) : 0;
-      return `📉 *${(d.address || '').split(',')[0]}* (${d.zip_code})\n     ${fmt(d.old_price)} → *${fmt(d.price)}* (−${pct}%)`;
-    }).join('\n\n');
+    const pct = (d: any) => d.old_price ? Math.round((1 - d.price / d.old_price) * 100) : 0;
+    // Numbered text + identically numbered photo captions so they associate
+    const lines = top.map((d, i) =>
+      `*${i + 1}.* 📉 *${(d.address || '').split(',')[0]}* (${d.zip_code})\n     ${fmt(d.old_price)} → *${fmt(d.price)}* (−${pct(d)}%)`
+    ).join('\n\n');
     const extra = drops.rows.length > top.length ? `\n\n…and ${drops.rows.length - top.length} more. Ask me "price drops this week".` : '';
-    const text = `🔔 *Price drops in Phoenix*\n\n${lines}${extra}`;
+    const text = `🔔 *Price drops in Phoenix*\n\n${lines}${extra}\n\n_Reply with a number (1–${top.length}) for photos & details._`;
 
-    // Cover photos of the dropped listings as an album, one short caption each
-    const media = top.filter(d => d.cover_image).slice(0, 10).map(d => {
-      const pct = d.old_price ? Math.round((1 - d.price / d.old_price) * 100) : 0;
-      return {
-        type: 'photo' as const,
-        media: d.cover_image,
-        caption: `${(d.address || '').split(',')[0]} — ${fmt(d.price)} (−${pct}%)`,
-      };
-    });
+    const media = top.map((d, i) => ({ d, i })).filter(x => x.d.cover_image).slice(0, 10).map(({ d, i }) => ({
+      type: 'photo' as const,
+      media: d.cover_image,
+      caption: `${i + 1}. ${(d.address || '').split(',')[0]} — ${fmt(d.price)} (−${pct(d)}%)`,
+    }));
+
+    // Same picker as search results: replying N opens that listing
+    const pickables = top.map(d => ({
+      id: d.property_id, address: d.address, zip_code: d.zip_code,
+      current_price: d.price, old_price: d.old_price, cover_image: d.cover_image,
+    }));
 
     for (const s of subs.rows) {
       const chat = Number(s.identifier);
       await bot.sendMessage(chat, text, { parse_mode: 'Markdown' }).catch(() => {});
       if (media.length) await bot.sendMediaGroup(chat, media).catch(() => {});
+      pendingResults.set(chat, pickables);
     }
     console.log(`Alerts: ${drops.rows.length} drops sent to ${subs.rows.length} subscribers`);
   }
